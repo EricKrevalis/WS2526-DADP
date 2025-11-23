@@ -5,19 +5,14 @@ import csv
 import os
 from datetime import datetime
 
+from constants import CITY_COORDINATES
+
 API_KEY = "76d3c2c705805e009533b5cee35fafef"
 
-cities = {
-    "hamburg": (53.5511, 9.9937),
-    "berlin": (52.5200, 13.4050),
-    "frankfurt": (50.1109, 8.6821),
-    "muenchen": (48.1351, 11.5820),
-    "koeln": (50.9375, 6.9603)
-}
-
 def get_city_coords(city_name: str) -> tuple[float, float]:
-    if city_name.lower() in cities.keys():
-        return cities[city_name.lower()]
+    if city_name in CITY_COORDINATES.keys():
+        coords = CITY_COORDINATES[city_name]
+        return (coords["lat"], coords["lon"])
     url = f"http://api.openweathermap.org/geo/1.0/direct?q={city_name},DE&limit=1&appid={API_KEY}"
     try:
         print("Getting city coordinates from API")
