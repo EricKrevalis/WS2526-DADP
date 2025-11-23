@@ -52,5 +52,5 @@ if __name__ == "__main__":
     jsonl_string = dict_to_jsonl(weather_json)
     print(jsonl_string)
 
-    with open('output.jsonl', 'w') as f:
+    with open('flow.jsonl', 'w') as f:
         f.write(jsonl_string)
