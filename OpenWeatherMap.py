@@ -8,7 +8,6 @@ from datetime import datetime
 API_KEY = "76d3c2c705805e009533b5cee35fafef"
 
 cities = {
-    "hamburg": (53.550341, 10.000654),
     "hamburg": (53.5511, 9.9937),
     "berlin": (52.5200, 13.4050),
     "frankfurt": (50.1109, 8.6821),
