@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 
 from constants import CITY_COORDINATES
+from util import dict_to_jsonl
 
 API_KEY = "76d3c2c705805e009533b5cee35fafef"
 
@@ -45,4 +46,11 @@ def get_weather(lat: float=None, lon: float=None, city_name: str=None):
 
 if __name__ == "__main__":
     print(get_city_coords("Hamburg"))
-    print(get_weather(city_name="Hamburg").json())
+    print(str(get_weather(city_name="Hamburg")))
+    weather_json = get_weather(city_name="Hamburg").json()
+
+    jsonl_string = dict_to_jsonl(weather_json)
+    print(jsonl_string)
+
+    with open('output.jsonl', 'w') as f:
+        f.write(jsonl_string)

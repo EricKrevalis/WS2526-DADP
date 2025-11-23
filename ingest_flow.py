@@ -6,6 +6,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from constants import CITIES, CITY_BBOXES
 
+from util import dict_to_jsonl
+
 # Load environment variables
 load_dotenv('env')
 
@@ -141,11 +143,12 @@ def main():
             all_data.append(result)
             
     print("\n--- Flow Data Output ---")
-    print(json.dumps(all_data, indent=2))
+    jsonl_string = dict_to_jsonl(all_data)
+    print(jsonl_string)
     
     # Save to file
-    with open("flow_output.json", "w") as f:
-        json.dump(all_data, f, indent=2)
+    with open('flow_output.jsonl', 'w') as f:
+        f.write(jsonl_string)
     print("Saved to flow_output.json")
 
 if __name__ == "__main__":
