@@ -16,7 +16,7 @@ What it does:
 5. Uploads to S3 with timestamped path structure
 
 S3 Output Structure:
-    s3://bucket/ingest-data/traffic_data/YYYY/MM/DD/HHMMSS_traffic_data.jsonl
+    s3://bucket/ingest-data/DB/YYYY/MM/DD/HHMMSS_DB_data.jsonl
 
 Environment Variables Required:
     - S3_BUCKET: Name of the S3 bucket to write data to
@@ -229,7 +229,7 @@ def lambda_handler(event, context):
             jsonl_string = dict_to_jsonl(data)
             
             timestamp = datetime.now().strftime("%Y/%m/%d/%H%M%S")
-            s3_key = f"{s3_output_path}/traffic_data/{timestamp}_traffic_data.jsonl"
+            s3_key = f"{s3_output_path}/DB/{timestamp}_DB_data.jsonl"
             
             s3_client.put_object(
                 Bucket=s3_bucket,
