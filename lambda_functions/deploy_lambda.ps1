@@ -92,6 +92,27 @@ Compress-Archive -Path "package\*", "lambda_TomTom_scraper.py" -DestinationPath 
 Write-Host "Packaging OWM scraper..."
 Compress-Archive -Path "package\*", "lambda_OWM_scraper.py" -DestinationPath "owm_scraper.zip" -Force
 
+# Helper function to wait for Lambda update to complete
+function Wait-LambdaUpdate {
+    param(
+        [string]$FunctionName,
+        [string]$Region,
+        [int]$MaxWaitSeconds = 60
+    )
+    $startTime = Get-Date
+    do {
+        Start-Sleep -Seconds 2
+        $status = aws lambda get-function-configuration --function-name $FunctionName --region $Region --query 'LastUpdateStatus' --output text 2>&1
+        $elapsed = ((Get-Date) - $startTime).TotalSeconds
+    } while ($status -eq 'InProgress' -and $elapsed -lt $MaxWaitSeconds)
+    
+    if ($status -eq 'Successful') {
+        return $true
+    } else {
+        return $false
+    }
+}
+
 # Create or update Lambda functions
 Write-Host ""
 Write-Host "Creating/Updating Lambda functions..." -ForegroundColor Yellow
@@ -108,12 +129,17 @@ if ($LASTEXITCODE -eq 0) {
         --zip-file "fileb://db_scraper.zip" `
         --region $REGION | Out-Null
     
-    aws lambda update-function-configuration `
-        --function-name $FUNCTION_NAME `
-        --environment "Variables={$envVars}" `
-        --timeout $TIMEOUT `
-        --memory-size $MEMORY_SIZE `
-        --region $REGION | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Waiting for code update to complete..." -ForegroundColor Gray
+        Wait-LambdaUpdate -FunctionName $FUNCTION_NAME -Region $REGION | Out-Null
+        
+        aws lambda update-function-configuration `
+            --function-name $FUNCTION_NAME `
+            --environment "Variables={$envVars}" `
+            --timeout $TIMEOUT `
+            --memory-size $MEMORY_SIZE `
+            --region $REGION | Out-Null
+    }
 } else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
@@ -143,12 +169,17 @@ if ($LASTEXITCODE -eq 0) {
         --zip-file "fileb://tomtom_scraper.zip" `
         --region $REGION | Out-Null
     
-    aws lambda update-function-configuration `
-        --function-name $FUNCTION_NAME `
-        --environment "Variables={$envVars}" `
-        --timeout $TIMEOUT `
-        --memory-size $MEMORY_SIZE `
-        --region $REGION | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Waiting for code update to complete..." -ForegroundColor Gray
+        Wait-LambdaUpdate -FunctionName $FUNCTION_NAME -Region $REGION | Out-Null
+        
+        aws lambda update-function-configuration `
+            --function-name $FUNCTION_NAME `
+            --environment "Variables={$envVars}" `
+            --timeout $TIMEOUT `
+            --memory-size $MEMORY_SIZE `
+            --region $REGION | Out-Null
+    }
 } else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
@@ -178,12 +209,17 @@ if ($LASTEXITCODE -eq 0) {
         --zip-file "fileb://owm_scraper.zip" `
         --region $REGION | Out-Null
     
-    aws lambda update-function-configuration `
-        --function-name $FUNCTION_NAME `
-        --environment "Variables={$envVars}" `
-        --timeout $TIMEOUT `
-        --memory-size $MEMORY_SIZE `
-        --region $REGION | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  Waiting for code update to complete..." -ForegroundColor Gray
+        Wait-LambdaUpdate -FunctionName $FUNCTION_NAME -Region $REGION | Out-Null
+        
+        aws lambda update-function-configuration `
+            --function-name $FUNCTION_NAME `
+            --environment "Variables={$envVars}" `
+            --timeout $TIMEOUT `
+            --memory-size $MEMORY_SIZE `
+            --region $REGION | Out-Null
+    }
 } else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
