@@ -2,27 +2,17 @@
 Lambda Function: OpenWeatherMap Weather Data Ingestion
 
 This Lambda function collects current weather data from the OpenWeatherMap API
-for major German cities. It fetches real-time weather conditions including
-temperature, humidity, pressure, wind, and weather descriptions.
+for major German cities using a grid-based sampling approach (matching TomTom grid).
 
 Data Source: OpenWeatherMap Current Weather Data API
 API Documentation: https://openweathermap.org/current
 
 What it does:
-1. Queries OpenWeatherMap API for each of the 5 major German cities
-2. Enriches weather data with metadata (city name, scrape timestamp)
-3. Aggregates all city weather data into a single dataset
-4. Writes data to S3 in JSONL format
-
-Weather Data Includes:
-    - Temperature (current, feels like, min, max)
-    - Atmospheric pressure
-    - Humidity percentage
-    - Wind speed and direction
-    - Cloud coverage
-    - Weather description (e.g., "clear sky", "light rain")
-    - Visibility
-    - Sunrise/sunset times
+1. Divides each city into a 3x3 grid (9 sample points) - matches TomTom grid exactly
+2. Queries OpenWeatherMap API for weather at each grid point
+3. Extracts relevant metrics for traffic correlation
+4. Aggregates data per city with samples array
+5. Writes data to S3 in JSONL format
 
 S3 Output Structure:
     s3://bucket/ingest-data/weather_data/YYYY/MM/DD/HHMMSS_weather_data.jsonl
@@ -34,188 +24,159 @@ Environment Variables Required:
 """
 
 import json
+import time
 from datetime import datetime
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import boto3
 import os
 
 # Initialize S3 client for writing data
 s3_client = boto3.client('s3')
 
-# Geographic coordinates (latitude, longitude) for each city's center
-# These coordinates are used to query weather data for each city
-# Format: Decimal degrees (WGS84 coordinate system)
-CITY_COORDINATES = {
-    "Hamburg": {"lat": 53.5511, "lon": 9.9937},      # Hamburg city center
-    "Berlin": {"lat": 52.5200, "lon": 13.4050},      # Berlin city center
-    "Frankfurt": {"lat": 50.1109, "lon": 8.6821},    # Frankfurt am Main city center
-    "Muenchen": {"lat": 48.1351, "lon": 11.5820},    # Munich city center
-    "Koeln": {"lat": 50.9375, "lon": 6.9603}          # Cologne city center
+# Standardized "Big 5" Bounding Boxes (Matches TomTom exactly for correlation)
+# Format: "minLon,minLat,maxLon,maxLat"
+CITY_BBOXES = {
+    "Hamburg":   "9.725,53.395,10.325,53.695",
+    "Berlin":    "13.088,52.338,13.761,52.675",
+    "Frankfurt": "8.480,50.000,8.800,50.230",
+    "Munich":    "11.360,48.060,11.722,48.248",
+    "Cologne":   "6.772,50.830,7.162,51.085"
 }
 
-# Extract list of city names from coordinates dictionary
-# This list is used to iterate through all cities during data collection
-CITIES = list(CITY_COORDINATES.keys())
-
 def dict_to_jsonl(data):
-    """
-    Convert a list of dictionaries (or a single dictionary) to a JSONL string.
-    
-    JSONL (JSON Lines) format: Each line is a valid JSON object, separated by newlines.
-    This format is efficient for streaming and processing large datasets.
-    
-    Args:
-        data: A list of dictionaries or a single dictionary to convert
-        
-    Returns:
-        str: A string where each line is a JSON object (newline-separated)
-    """
+    """Convert a list of dictionaries (or a single dictionary) to a JSONL string."""
     if isinstance(data, dict):
         data = [data]
     return '\n'.join(json.dumps(item) for item in data)
 
-def get_weather(lat, lon, city_name, api_key):
+def get_grid_points(bbox_str, grid_size=3):
     """
-    Fetch current weather data for a specific geographic location.
-    
-    This function queries the OpenWeatherMap Current Weather Data API to get
-    real-time weather conditions at a given latitude/longitude coordinate.
-    The API returns comprehensive weather information including temperature,
-    humidity, pressure, wind, and weather conditions.
+    Divide a bounding box into a grid and return the center points of each cell.
+    Reused logic from TomTom scraper - ensures same grid points for correlation.
     
     Args:
-        lat (float): Latitude coordinate of the location
-        lon (float): Longitude coordinate of the location
-        city_name (str): Name of the city (for metadata enrichment)
-        api_key (str): OpenWeatherMap API key for authentication
+        bbox_str (str): Bounding box string in format "minLon,minLat,maxLon,maxLat"
+        grid_size (int): Number of grid cells per side (default: 3)
         
     Returns:
-        dict: Weather data dictionary with metadata, or None on error
-        
-    API Endpoint:
-        GET /data/2.5/weather
-        
-    API Parameters:
-        - lat: Latitude coordinate
-        - lon: Longitude coordinate
-        - appid: API key (authentication)
-        
-    Response Structure (enriched with metadata):
-        {
-            "coord": {"lon": float, "lat": float},
-            "weather": [{"id": int, "main": str, "description": str, "icon": str}],
-            "base": str,
-            "main": {
-                "temp": float,           # Temperature in Kelvin
-                "feels_like": float,     # Feels-like temperature
-                "temp_min": float,       # Minimum temperature
-                "temp_max": float,       # Maximum temperature
-                "pressure": int,         # Atmospheric pressure (hPa)
-                "humidity": int          # Humidity percentage
-            },
-            "visibility": int,           # Visibility in meters
-            "wind": {
-                "speed": float,          # Wind speed (m/s)
-                "deg": int              # Wind direction (degrees)
-            },
-            "clouds": {"all": int},      # Cloud coverage percentage
-            "dt": int,                  # Data time (Unix timestamp)
-            "sys": {
-                "type": int,
-                "id": int,
-                "country": str,
-                "sunrise": int,         # Sunrise time (Unix timestamp)
-                "sunset": int           # Sunset time (Unix timestamp)
-            },
-            "timezone": int,            # Timezone offset (seconds)
-            "id": int,                 # City ID
-            "name": str,               # City name
-            "cod": int,               # Internal parameter
-            "meta_city": str,          # Added: City name for tracking
-            "meta_scraped_at": str     # Added: ISO timestamp of data collection
-        }
-        
-    Note: Temperature values are in Kelvin by default. Convert to Celsius: K - 273.15
+        list: List of dictionaries with 'id', 'lat', 'lon' keys
     """
-    # Construct API URL with query parameters
-    # OpenWeatherMap Current Weather Data API endpoint
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={api_key}"
+    try:
+        min_lon, min_lat, max_lon, max_lat = map(float, bbox_str.split(','))
+    except ValueError:
+        print(f"Invalid BBOX format: {bbox_str}")
+        return []
+
+    width = max_lon - min_lon
+    height = max_lat - min_lat
+    
+    step_x = width / grid_size
+    step_y = height / grid_size
+    
+    points = []
+    for i in range(grid_size):
+        for j in range(grid_size):
+            center_lon = min_lon + (i * step_x) + (step_x / 2)
+            center_lat = min_lat + (j * step_y) + (step_y / 2)
+            points.append({
+                'id': f"grid_{i}_{j}",
+                'lat': center_lat,
+                'lon': center_lon
+            })
+    return points
+
+def fetch_weather_at_point(lat, lon, api_key, session):
+    """
+    Fetch weather data for a specific geographic point.
+    
+    Args:
+        lat (float): Latitude coordinate
+        lon (float): Longitude coordinate
+        api_key (str): OpenWeatherMap API key
+        session (requests.Session): HTTP session with retry logic
+        
+    Returns:
+        dict: Weather data dictionary, or None on error
+    """
+    base_url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {
+        'lat': lat,
+        'lon': lon,
+        'appid': api_key,
+        'units': 'metric',  # Get temperature in Celsius
+    }
     
     try:
-        # Make HTTP GET request with 10-second timeout
-        # Timeout prevents Lambda from hanging if API is slow/unresponsive
-        res = requests.get(url, timeout=10)
-        
-        # Check for HTTP errors
-        if res.status_code != 200:
-            # Log error details (first 50 chars of response)
-            print(f"Open Weather Map API Error: {res.status_code} - {res.text[:50]}")
-            return None
-            
-        # Parse JSON response
-        data = res.json()
-        
-        # Enrich weather data with metadata
-        # This helps track where and when data was collected
-        data['meta_city'] = city_name                    # City name for filtering/grouping
-        data['meta_scraped_at'] = datetime.now().isoformat()  # Collection timestamp (ISO 8601)
-        
-        return data
-        
-    except Exception as e:
-        # Log error but don't fail - allows other cities to be processed
-        print(f"Error fetching weather data for {city_name}: {e}")
+        res = session.get(base_url, params=params, timeout=10)
+        res.raise_for_status()
+        return res.json()
+    except Exception:
+        # Silent fail for individual grid points is acceptable
         return None
+
+def process_city(city_name, bbox, api_key, session):
+    """
+    Process weather data for a single city using grid-based sampling.
+    
+    Args:
+        city_name (str): Name of the city
+        bbox (str): Bounding box string
+        api_key (str): OpenWeatherMap API key
+        session (requests.Session): HTTP session with retry logic
+        
+    Returns:
+        dict: City weather data with samples array
+    """
+    points = get_grid_points(bbox, grid_size=3)
+    print(f"Sampling {len(points)} weather points...", end=" ")
+    
+    city_samples = []
+    
+    for pt in points:
+        data = fetch_weather_at_point(pt['lat'], pt['lon'], api_key, session)
+        
+        if data:
+            # Extract highly relevant metrics for traffic correlation
+            rain_data = data.get('rain', {})
+            # API sometimes returns rain: {'1h': 0.5} or just rain: {}
+            rain_1h = rain_data.get('1h', 0) if isinstance(rain_data, dict) else 0
+
+            sample = {
+                "grid_id": pt['id'],
+                "lat": pt['lat'],
+                "lon": pt['lon'],
+                "temp": data.get('main', {}).get('temp'),
+                "humidity": data.get('main', {}).get('humidity'),
+                "weather_main": data.get('weather', [{}])[0].get('main'),
+                "description": data.get('weather', [{}])[0].get('description'),
+                "wind_speed": data.get('wind', {}).get('speed'),
+                "rain_1h_mm": rain_1h,
+                "visibility": data.get('visibility')
+            }
+            city_samples.append(sample)
+        
+        # Rate limit politeness
+        time.sleep(0.1)
+
+    return {
+        "meta_city": city_name,
+        "meta_scraped_at": datetime.now().isoformat(),
+        "meta_type": "owm_grid_weather",
+        "grid_size": "3x3",
+        "samples": city_samples
+    }
 
 def lambda_handler(event, context):
     """
     AWS Lambda handler function - entry point for the Lambda execution.
-    
-    This function orchestrates the weather data collection process for all
-    configured cities. It processes each city sequentially, aggregates the results,
-    and writes them to S3.
-    
-    Args:
-        event (dict): Event data passed to Lambda (usually empty dict for scheduled invocations)
-        context (LambdaContext): Runtime information about the Lambda execution
-        
-    Returns:
-        dict: HTTP-like response with statusCode and body
-            - statusCode 200: Success (with or without data)
-            - statusCode 500: Error occurred
-            
-    Environment Variables:
-        S3_BUCKET (required): Name of S3 bucket to write data to
-        S3_OUTPUT_PATH (optional): Prefix path in S3 bucket (default: 'ingest-data')
-        WEATHER_API_KEY (required): OpenWeatherMap API key for authentication
-        
-    S3 Output Format:
-        s3://{S3_BUCKET}/{S3_OUTPUT_PATH}/weather_data/YYYY/MM/DD/HHMMSS_weather_data.jsonl
-        
-    Processing Flow:
-        1. Read configuration from environment variables
-        2. Validate required variables are set
-        3. Iterate through all cities in CITY_COORDINATES
-        4. Fetch weather data for each city
-        5. Aggregate all city weather data
-        6. Convert to JSONL format
-        7. Upload to S3
-        8. Return success response
-        
-    Example Response:
-        {
-            'statusCode': 200,
-            'body': '{"message": "Weather data collection successful", "cities_processed": 5, ...}'
-        }
     """
     try:
-        # Read configuration from environment variables
-        # These are set when the Lambda function is created/updated
         s3_bucket = os.environ.get('S3_BUCKET')
         s3_output_path = os.environ.get('S3_OUTPUT_PATH', 'ingest-data')
         weather_api_key = os.environ.get('WEATHER_API_KEY')
         
-        # Validate required environment variables
         if not s3_bucket:
             return {
                 'statusCode': 500,
@@ -228,58 +189,46 @@ def lambda_handler(event, context):
                 'body': json.dumps({'error': 'WEATHER_API_KEY environment variable not set'})
             }
         
-        print("Starting Weather Data Ingestion...")
+        print("Starting Weather Grid Cycle...")
         
-        # Process each city and collect weather data
+        # Create session with retry logic
+        session = requests.Session()
+        retries = Retry(total=3, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        session.mount('https://', HTTPAdapter(max_retries=retries))
+        
         all_data = []
         
-        # Iterate through all configured cities
-        # Sequential processing is fine here since we only have 5 cities
-        for city_name, coords in CITY_COORDINATES.items():
-            print(f"Fetching weather for {city_name}...")
+        for city, bbox in CITY_BBOXES.items():
+            print(f"Scanning {city}...", end=" ")
             
-            # Fetch current weather data for this city
-            # Uses city center coordinates to get representative weather conditions
-            weather_data = get_weather(coords['lat'], coords['lon'], city_name, weather_api_key)
+            result = process_city(city, bbox, weather_api_key, session)
+            all_data.append(result)
             
-            # Add to results if data was successfully fetched
-            if weather_data:
-                all_data.append(weather_data)
+            print(f"Done. Captured {len(result['samples'])} points.")
+            time.sleep(1)
         
-        # Write data to S3 if we collected any
         if all_data:
-            # Convert list of city weather dictionaries to JSONL format
-            # JSONL is efficient for large datasets and streaming processing
             jsonl_string = dict_to_jsonl(all_data)
             
-            # Generate S3 object key with timestamp-based path
-            # Format: YYYY/MM/DD/HHMMSS_weather_data.jsonl
-            # This creates a hierarchical structure in S3 that's easy to query by date
             timestamp = datetime.now().strftime("%Y/%m/%d/%H%M%S")
             s3_key = f"{s3_output_path}/weather_data/{timestamp}_weather_data.jsonl"
             
-            # Upload data to S3
-            # ContentType is set to 'application/json' for proper handling by S3
             s3_client.put_object(
                 Bucket=s3_bucket,
                 Key=s3_key,
-                Body=jsonl_string.encode('utf-8'),  # Encode string to bytes for S3
+                Body=jsonl_string.encode('utf-8'),
                 ContentType='application/json'
             )
             
-            # Return success response with metadata
-            # This information is useful for monitoring and debugging
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'message': 'Weather data collection successful',
-                    'cities_processed': len(all_data),  # Number of cities successfully processed
-                    's3_location': f's3://{s3_bucket}/{s3_key}'  # S3 location for downloaded data
+                    'cities_processed': len(all_data),
+                    's3_location': f's3://{s3_bucket}/{s3_key}'
                 })
             }
         else:
-            # No data collected, but not necessarily an error
-            # Could happen if API is down or rate-limited
             return {
                 'statusCode': 200,
                 'body': json.dumps({
@@ -289,11 +238,8 @@ def lambda_handler(event, context):
             }
             
     except Exception as e:
-        # Catch any unexpected errors and return error response
-        # Logging to CloudWatch Logs for debugging
         print(f"Error in lambda_handler: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
-

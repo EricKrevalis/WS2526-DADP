@@ -8,9 +8,9 @@ if (-not $S3_BUCKET) { $S3_BUCKET = "your-data-bucket-name" }
 $S3_OUTPUT_PATH = $env:S3_OUTPUT_PATH
 if (-not $S3_OUTPUT_PATH) { $S3_OUTPUT_PATH = "ingest-data" }
 $REGION = $env:REGION
-if (-not $REGION) { $REGION = "eu-central-1" }
+if (-not $REGION) { $REGION = "eu-north-1" }
 $LAMBDA_ROLE_NAME = $env:LAMBDA_ROLE_NAME
-if (-not $LAMBDA_ROLE_NAME) { $LAMBDA_ROLE_NAME = "lambda-data-ingest-role" }
+if (-not $LAMBDA_ROLE_NAME) { $LAMBDA_ROLE_NAME = "younglambda" }
 
 # API Keys - Set these as environment variables
 $TOMTOM_API_KEY = $env:TOMTOM_API_KEY
@@ -30,71 +30,21 @@ Write-Host "AWS Account ID: $ACCOUNT_ID"
 Write-Host "Region: $REGION"
 Write-Host ""
 
-# Create IAM role for Lambda if it doesn't exist
-Write-Host "Creating/Checking IAM role..." -ForegroundColor Yellow
-try {
-    $ROLE_ARN = (aws iam get-role --role-name $LAMBDA_ROLE_NAME --query 'Role.Arn' --output text 2>$null)
-} catch {
-    $ROLE_ARN = $null
-}
-
-if (-not $ROLE_ARN) {
-    Write-Host "Creating IAM role: $LAMBDA_ROLE_NAME" -ForegroundColor Green
-    
-    # Create trust policy
-    $trustPolicy = @{
-        Version = "2012-10-17"
-        Statement = @(
-            @{
-                Effect = "Allow"
-                Principal = @{
-                    Service = "lambda.amazonaws.com"
-                }
-                Action = "sts:AssumeRole"
-            }
-        )
-    } | ConvertTo-Json -Depth 10
-    
-    $trustPolicy | Out-File -FilePath "$env:TEMP\trust-policy.json" -Encoding utf8
-    
-    # Create role
-    aws iam create-role `
-        --role-name $LAMBDA_ROLE_NAME `
-        --assume-role-policy-document "file://$env:TEMP\trust-policy.json" `
-        --description "Role for data ingestion Lambda functions" | Out-Null
-    
-    # Attach policies
-    aws iam attach-role-policy `
-        --role-name $LAMBDA_ROLE_NAME `
-        --policy-arn "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" | Out-Null
-    
-    # Create and attach S3 policy
-    $s3Policy = @{
-        Version = "2012-10-17"
-        Statement = @(
-            @{
-                Effect = "Allow"
-                Action = @("s3:PutObject", "s3:GetObject")
-                Resource = "arn:aws:s3:::$S3_BUCKET/*"
-            }
-        )
-    } | ConvertTo-Json -Depth 10
-    
-    $s3Policy | Out-File -FilePath "$env:TEMP\s3-policy.json" -Encoding utf8
-    
-    $POLICY_ARN = (aws iam create-policy `
-        --policy-name "${LAMBDA_ROLE_NAME}-s3-policy" `
-        --policy-document "file://$env:TEMP\s3-policy.json" `
-        --query 'Policy.Arn' --output text)
-    
-    aws iam attach-role-policy `
-        --role-name $LAMBDA_ROLE_NAME `
-        --policy-arn $POLICY_ARN | Out-Null
-    
-    $ROLE_ARN = (aws iam get-role --role-name $LAMBDA_ROLE_NAME --query 'Role.Arn' --output text)
-    Write-Host "Role created: $ROLE_ARN" -ForegroundColor Green
+# Get IAM role ARN (role should already exist - created via console)
+Write-Host "Checking IAM role..." -ForegroundColor Yellow
+$roleCheck = aws iam get-role --role-name $LAMBDA_ROLE_NAME --query 'Role.Arn' --output text 2>&1
+if ($LASTEXITCODE -eq 0 -and $roleCheck) {
+    $ROLE_ARN = $roleCheck
+    Write-Host "Role found: $ROLE_ARN" -ForegroundColor Green
 } else {
-    Write-Host "Role already exists: $ROLE_ARN" -ForegroundColor Green
+    Write-Host "ERROR: IAM role '$LAMBDA_ROLE_NAME' not found!" -ForegroundColor Red
+    Write-Host "Please create the role via AWS Console first:" -ForegroundColor Yellow
+    Write-Host "  1. Go to IAM -> Roles -> Create role" -ForegroundColor Yellow
+    Write-Host "  2. Select 'Lambda' as service" -ForegroundColor Yellow
+    Write-Host "  3. Attach 'AWSLambdaBasicExecutionRole' policy" -ForegroundColor Yellow
+    Write-Host "  4. Add S3 access policy for bucket: $S3_BUCKET" -ForegroundColor Yellow
+    Write-Host "  5. Name it: $LAMBDA_ROLE_NAME" -ForegroundColor Yellow
+    exit 1
 }
 
 # Install dependencies
@@ -105,11 +55,10 @@ if (Test-Path "package") {
 }
 New-Item -ItemType Directory -Path "package" | Out-Null
 
-# Try pip, then pip3
-try {
-    pip install -r requirements.txt -t ./package --quiet 2>$null
-} catch {
-    pip3 install -r requirements.txt -t ./package --quiet 2>$null
+# Install dependencies using python -m pip (more reliable)
+python -m pip install -r requirements.txt -t ./package --quiet 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Warning: pip install had issues, continuing anyway..." -ForegroundColor Yellow
 }
 
 # Create deployment packages
@@ -135,8 +84,8 @@ Write-Host "Creating/Updating Lambda functions..." -ForegroundColor Yellow
 $FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-db-scraper"
 $envVars = "S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH"
 
-try {
-    aws lambda get-function --function-name $FUNCTION_NAME --region $REGION | Out-Null
+$functionCheck = aws lambda get-function --function-name $FUNCTION_NAME --region $REGION 2>&1
+if ($LASTEXITCODE -eq 0) {
     Write-Host "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code `
         --function-name $FUNCTION_NAME `
@@ -149,7 +98,7 @@ try {
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
         --region $REGION | Out-Null
-} catch {
+} else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
         --function-name $FUNCTION_NAME `
@@ -161,14 +110,17 @@ try {
         --memory-size $MEMORY_SIZE `
         --environment "Variables={$envVars}" `
         --region $REGION | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to create function $FUNCTION_NAME" -ForegroundColor Red
+    }
 }
 
 # Flow Ingest Function
 $FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-flow-ingest"
 $envVars = "S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,TOMTOM_API_KEY=$TOMTOM_API_KEY"
 
-try {
-    aws lambda get-function --function-name $FUNCTION_NAME --region $REGION | Out-Null
+$functionCheck = aws lambda get-function --function-name $FUNCTION_NAME --region $REGION 2>&1
+if ($LASTEXITCODE -eq 0) {
     Write-Host "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code `
         --function-name $FUNCTION_NAME `
@@ -181,7 +133,7 @@ try {
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
         --region $REGION | Out-Null
-} catch {
+} else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
         --function-name $FUNCTION_NAME `
@@ -193,14 +145,17 @@ try {
         --memory-size $MEMORY_SIZE `
         --environment "Variables={$envVars}" `
         --region $REGION | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to create function $FUNCTION_NAME" -ForegroundColor Red
+    }
 }
 
 # Weather Ingest Function
 $FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-weather-ingest"
 $envVars = "S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,WEATHER_API_KEY=$WEATHER_API_KEY"
 
-try {
-    aws lambda get-function --function-name $FUNCTION_NAME --region $REGION | Out-Null
+$functionCheck = aws lambda get-function --function-name $FUNCTION_NAME --region $REGION 2>&1
+if ($LASTEXITCODE -eq 0) {
     Write-Host "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code `
         --function-name $FUNCTION_NAME `
@@ -213,7 +168,7 @@ try {
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
         --region $REGION | Out-Null
-} catch {
+} else {
     Write-Host "Creating function: $FUNCTION_NAME"
     aws lambda create-function `
         --function-name $FUNCTION_NAME `
@@ -225,6 +180,9 @@ try {
         --memory-size $MEMORY_SIZE `
         --environment "Variables={$envVars}" `
         --region $REGION | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Failed to create function $FUNCTION_NAME" -ForegroundColor Red
+    }
 }
 
 # Create EventBridge rules for scheduling
