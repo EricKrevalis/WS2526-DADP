@@ -4,7 +4,7 @@
 # Configuration - Update these values
 $FUNCTION_NAME_PREFIX = "data-ingest"
 $S3_BUCKET = $env:S3_BUCKET
-if (-not $S3_BUCKET) { $S3_BUCKET = "your-data-bucket-name" }
+if (-not $S3_BUCKET) { $S3_BUCKET = "youngleebigdatabucket" }
 $S3_OUTPUT_PATH = $env:S3_OUTPUT_PATH
 if (-not $S3_OUTPUT_PATH) { $S3_OUTPUT_PATH = "ingest-data" }
 $REGION = $env:REGION
@@ -24,10 +24,26 @@ $RUNTIME = "python3.10"
 Write-Host "=== AWS Lambda Data Ingestion Deployment ===" -ForegroundColor Cyan
 Write-Host ""
 
+# Validate configuration
+if ($S3_BUCKET -eq "your-data-bucket-name" -or -not $S3_BUCKET) {
+    Write-Host "ERROR: S3_BUCKET not set!" -ForegroundColor Red
+    Write-Host "Set it with: `$env:S3_BUCKET = 'youngleebigdatabucket'" -ForegroundColor Yellow
+    exit 1
+}
+
+if (-not $TOMTOM_API_KEY) {
+    Write-Host "WARNING: TOMTOM_API_KEY not set!" -ForegroundColor Yellow
+}
+
+if (-not $WEATHER_API_KEY) {
+    Write-Host "WARNING: WEATHER_API_KEY not set!" -ForegroundColor Yellow
+}
+
 # Get AWS account ID
 $ACCOUNT_ID = (aws sts get-caller-identity --query Account --output text)
 Write-Host "AWS Account ID: $ACCOUNT_ID"
 Write-Host "Region: $REGION"
+Write-Host "S3 Bucket: $S3_BUCKET"
 Write-Host ""
 
 # Get IAM role ARN (role should already exist - created via console)
@@ -66,15 +82,15 @@ Write-Host "Creating deployment packages..." -ForegroundColor Yellow
 
 # DB Scraper
 Write-Host "Packaging DB scraper..."
-Compress-Archive -Path "package\*", "lambda_db_scraper.py" -DestinationPath "db_scraper.zip" -Force
+Compress-Archive -Path "package\*", "lambda_DB_scraper.py" -DestinationPath "db_scraper.zip" -Force
 
-# Flow Ingest
-Write-Host "Packaging Flow ingest..."
-Compress-Archive -Path "package\*", "lambda_flow_ingest.py" -DestinationPath "flow_ingest.zip" -Force
+# TomTom Scraper
+Write-Host "Packaging TomTom scraper..."
+Compress-Archive -Path "package\*", "lambda_TomTom_scraper.py" -DestinationPath "tomtom_scraper.zip" -Force
 
-# Weather Ingest
-Write-Host "Packaging Weather ingest..."
-Compress-Archive -Path "package\*", "lambda_weather_ingest.py" -DestinationPath "weather_ingest.zip" -Force
+# OWM Scraper
+Write-Host "Packaging OWM scraper..."
+Compress-Archive -Path "package\*", "lambda_OWM_scraper.py" -DestinationPath "owm_scraper.zip" -Force
 
 # Create or update Lambda functions
 Write-Host ""
@@ -104,7 +120,7 @@ if ($LASTEXITCODE -eq 0) {
         --function-name $FUNCTION_NAME `
         --runtime $RUNTIME `
         --role $ROLE_ARN `
-        --handler lambda_db_scraper.lambda_handler `
+        --handler lambda_DB_scraper.lambda_handler `
         --zip-file "fileb://db_scraper.zip" `
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
@@ -115,8 +131,8 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# Flow Ingest Function
-$FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-flow-ingest"
+# TomTom Scraper Function
+$FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-tomtom-scraper"
 $envVars = "S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,TOMTOM_API_KEY=$TOMTOM_API_KEY"
 
 $functionCheck = aws lambda get-function --function-name $FUNCTION_NAME --region $REGION 2>&1
@@ -124,7 +140,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code `
         --function-name $FUNCTION_NAME `
-        --zip-file "fileb://flow_ingest.zip" `
+        --zip-file "fileb://tomtom_scraper.zip" `
         --region $REGION | Out-Null
     
     aws lambda update-function-configuration `
@@ -139,8 +155,8 @@ if ($LASTEXITCODE -eq 0) {
         --function-name $FUNCTION_NAME `
         --runtime $RUNTIME `
         --role $ROLE_ARN `
-        --handler lambda_flow_ingest.lambda_handler `
-        --zip-file "fileb://flow_ingest.zip" `
+        --handler lambda_TomTom_scraper.lambda_handler `
+        --zip-file "fileb://tomtom_scraper.zip" `
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
         --environment "Variables={$envVars}" `
@@ -150,8 +166,8 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# Weather Ingest Function
-$FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-weather-ingest"
+# OWM Scraper Function
+$FUNCTION_NAME = "${FUNCTION_NAME_PREFIX}-owm-scraper"
 $envVars = "S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,WEATHER_API_KEY=$WEATHER_API_KEY"
 
 $functionCheck = aws lambda get-function --function-name $FUNCTION_NAME --region $REGION 2>&1
@@ -159,7 +175,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code `
         --function-name $FUNCTION_NAME `
-        --zip-file "fileb://weather_ingest.zip" `
+        --zip-file "fileb://owm_scraper.zip" `
         --region $REGION | Out-Null
     
     aws lambda update-function-configuration `
@@ -174,8 +190,8 @@ if ($LASTEXITCODE -eq 0) {
         --function-name $FUNCTION_NAME `
         --runtime $RUNTIME `
         --role $ROLE_ARN `
-        --handler lambda_weather_ingest.lambda_handler `
-        --zip-file "fileb://weather_ingest.zip" `
+        --handler lambda_OWM_scraper.lambda_handler `
+        --zip-file "fileb://owm_scraper.zip" `
         --timeout $TIMEOUT `
         --memory-size $MEMORY_SIZE `
         --environment "Variables={$envVars}" `
@@ -210,8 +226,8 @@ aws lambda add-permission `
     --source-arn "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/${RULE_NAME}" `
     --region $REGION 2>$null
 
-# Flow Ingest - Every 10 minutes
-$RULE_NAME = "lambda-flow-ingest-schedule"
+# TomTom Scraper - Every 10 minutes
+$RULE_NAME = "lambda-tomtom-scraper-schedule"
 aws events put-rule `
     --name $RULE_NAME `
     --schedule-expression "rate(10 minutes)" `
@@ -220,19 +236,19 @@ aws events put-rule `
 
 aws events put-targets `
     --rule $RULE_NAME `
-    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-flow-ingest" `
+    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-tomtom-scraper" `
     --region $REGION | Out-Null
 
 aws lambda add-permission `
-    --function-name "${FUNCTION_NAME_PREFIX}-flow-ingest" `
+    --function-name "${FUNCTION_NAME_PREFIX}-tomtom-scraper" `
     --statement-id allow-eventbridge `
     --action lambda:InvokeFunction `
     --principal events.amazonaws.com `
     --source-arn "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/${RULE_NAME}" `
     --region $REGION 2>$null
 
-# Weather Ingest - Every 10 minutes
-$RULE_NAME = "lambda-weather-ingest-schedule"
+# OWM Scraper - Every 10 minutes
+$RULE_NAME = "lambda-owm-scraper-schedule"
 aws events put-rule `
     --name $RULE_NAME `
     --schedule-expression "rate(10 minutes)" `
@@ -241,11 +257,11 @@ aws events put-rule `
 
 aws events put-targets `
     --rule $RULE_NAME `
-    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-weather-ingest" `
+    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-owm-scraper" `
     --region $REGION | Out-Null
 
 aws lambda add-permission `
-    --function-name "${FUNCTION_NAME_PREFIX}-weather-ingest" `
+    --function-name "${FUNCTION_NAME_PREFIX}-owm-scraper" `
     --statement-id allow-eventbridge `
     --action lambda:InvokeFunction `
     --principal events.amazonaws.com `
@@ -256,15 +272,15 @@ aws lambda add-permission `
 Write-Host ""
 Write-Host "Cleaning up temporary files..." -ForegroundColor Yellow
 Remove-Item -Recurse -Force "package" -ErrorAction SilentlyContinue
-Remove-Item -Force "db_scraper.zip", "flow_ingest.zip", "weather_ingest.zip" -ErrorAction SilentlyContinue
+Remove-Item -Force "db_scraper.zip", "tomtom_scraper.zip", "owm_scraper.zip" -ErrorAction SilentlyContinue
 
 Write-Host ""
 Write-Host "=== Deployment Complete! ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "Lambda Functions:"
 Write-Host "  - ${FUNCTION_NAME_PREFIX}-db-scraper"
-Write-Host "  - ${FUNCTION_NAME_PREFIX}-flow-ingest"
-Write-Host "  - ${FUNCTION_NAME_PREFIX}-weather-ingest"
+Write-Host "  - ${FUNCTION_NAME_PREFIX}-tomtom-scraper"
+Write-Host "  - ${FUNCTION_NAME_PREFIX}-owm-scraper"
 Write-Host ""
 Write-Host "Schedules:"
 Write-Host "  - All functions run every 10 minutes"

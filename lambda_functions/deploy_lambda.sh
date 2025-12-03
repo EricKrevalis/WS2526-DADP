@@ -110,21 +110,21 @@ echo "Packaging DB scraper..."
 cd package
 zip -r ../db_scraper.zip . -q
 cd ..
-zip -q db_scraper.zip lambda_db_scraper.py
+zip -q db_scraper.zip lambda_DB_scraper.py
 
-# Flow Ingest
-echo "Packaging Flow ingest..."
+# TomTom Scraper
+echo "Packaging TomTom scraper..."
 cd package
-zip -r ../flow_ingest.zip . -q
+zip -r ../tomtom_scraper.zip . -q
 cd ..
-zip -q flow_ingest.zip lambda_flow_ingest.py
+zip -q tomtom_scraper.zip lambda_TomTom_scraper.py
 
-# Weather Ingest
-echo "Packaging Weather ingest..."
+# OWM Scraper
+echo "Packaging OWM scraper..."
 cd package
-zip -r ../weather_ingest.zip . -q
+zip -r ../owm_scraper.zip . -q
 cd ..
-zip -q weather_ingest.zip lambda_weather_ingest.py
+zip -q owm_scraper.zip lambda_OWM_scraper.py
 
 # Create or update Lambda functions
 echo ""
@@ -151,7 +151,7 @@ else
         --function-name $FUNCTION_NAME \
         --runtime $RUNTIME \
         --role $ROLE_ARN \
-        --handler lambda_db_scraper.lambda_handler \
+        --handler lambda_DB_scraper.lambda_handler \
         --zip-file fileb://db_scraper.zip \
         --timeout $TIMEOUT \
         --memory-size $MEMORY_SIZE \
@@ -159,13 +159,13 @@ else
         --region $REGION > /dev/null
 fi
 
-# Flow Ingest Function
-FUNCTION_NAME="${FUNCTION_NAME_PREFIX}-flow-ingest"
+# TomTom Scraper Function
+FUNCTION_NAME="${FUNCTION_NAME_PREFIX}-tomtom-scraper"
 if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &>/dev/null; then
     echo "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code \
         --function-name $FUNCTION_NAME \
-        --zip-file fileb://flow_ingest.zip \
+        --zip-file fileb://tomtom_scraper.zip \
         --region $REGION > /dev/null
     
     aws lambda update-function-configuration \
@@ -180,21 +180,21 @@ else
         --function-name $FUNCTION_NAME \
         --runtime $RUNTIME \
         --role $ROLE_ARN \
-        --handler lambda_flow_ingest.lambda_handler \
-        --zip-file fileb://flow_ingest.zip \
+        --handler lambda_TomTom_scraper.lambda_handler \
+        --zip-file fileb://tomtom_scraper.zip \
         --timeout $TIMEOUT \
         --memory-size $MEMORY_SIZE \
         --environment "Variables={S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,TOMTOM_API_KEY=$TOMTOM_API_KEY}" \
         --region $REGION > /dev/null
 fi
 
-# Weather Ingest Function
-FUNCTION_NAME="${FUNCTION_NAME_PREFIX}-weather-ingest"
+# OWM Scraper Function
+FUNCTION_NAME="${FUNCTION_NAME_PREFIX}-owm-scraper"
 if aws lambda get-function --function-name $FUNCTION_NAME --region $REGION &>/dev/null; then
     echo "Updating function: $FUNCTION_NAME"
     aws lambda update-function-code \
         --function-name $FUNCTION_NAME \
-        --zip-file fileb://weather_ingest.zip \
+        --zip-file fileb://owm_scraper.zip \
         --region $REGION > /dev/null
     
     aws lambda update-function-configuration \
@@ -209,8 +209,8 @@ else
         --function-name $FUNCTION_NAME \
         --runtime $RUNTIME \
         --role $ROLE_ARN \
-        --handler lambda_weather_ingest.lambda_handler \
-        --zip-file fileb://weather_ingest.zip \
+        --handler lambda_OWM_scraper.lambda_handler \
+        --zip-file fileb://owm_scraper.zip \
         --timeout $TIMEOUT \
         --memory-size $MEMORY_SIZE \
         --environment "Variables={S3_BUCKET=$S3_BUCKET,S3_OUTPUT_PATH=$S3_OUTPUT_PATH,WEATHER_API_KEY=$WEATHER_API_KEY}" \
@@ -243,8 +243,8 @@ aws lambda add-permission \
     --source-arn "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/${RULE_NAME}" \
     --region $REGION > /dev/null 2>&1 || true
 
-# Flow Ingest - Every 10 minutes
-RULE_NAME="lambda-flow-ingest-schedule"
+# TomTom Scraper - Every 10 minutes
+RULE_NAME="lambda-tomtom-scraper-schedule"
 aws events put-rule \
     --name $RULE_NAME \
     --schedule-expression "rate(10 minutes)" \
@@ -253,19 +253,19 @@ aws events put-rule \
 
 aws events put-targets \
     --rule $RULE_NAME \
-    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-flow-ingest" \
+    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-tomtom-scraper" \
     --region $REGION > /dev/null
 
 aws lambda add-permission \
-    --function-name ${FUNCTION_NAME_PREFIX}-flow-ingest \
+    --function-name ${FUNCTION_NAME_PREFIX}-tomtom-scraper \
     --statement-id allow-eventbridge \
     --action lambda:InvokeFunction \
     --principal events.amazonaws.com \
     --source-arn "arn:aws:events:${REGION}:${ACCOUNT_ID}:rule/${RULE_NAME}" \
     --region $REGION > /dev/null 2>&1 || true
 
-# Weather Ingest - Every 10 minutes (or 30 minutes to save costs)
-RULE_NAME="lambda-weather-ingest-schedule"
+# OWM Scraper - Every 10 minutes
+RULE_NAME="lambda-owm-scraper-schedule"
 aws events put-rule \
     --name $RULE_NAME \
     --schedule-expression "rate(10 minutes)" \
@@ -274,11 +274,11 @@ aws events put-rule \
 
 aws events put-targets \
     --rule $RULE_NAME \
-    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-weather-ingest" \
+    --targets "Id=1,Arn=arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME_PREFIX}-owm-scraper" \
     --region $REGION > /dev/null
 
 aws lambda add-permission \
-    --function-name ${FUNCTION_NAME_PREFIX}-weather-ingest \
+    --function-name ${FUNCTION_NAME_PREFIX}-owm-scraper \
     --statement-id allow-eventbridge \
     --action lambda:InvokeFunction \
     --principal events.amazonaws.com \
@@ -289,7 +289,7 @@ aws lambda add-permission \
 echo ""
 echo "Cleaning up temporary files..."
 rm -rf package
-rm -f db_scraper.zip flow_ingest.zip weather_ingest.zip
+rm -f db_scraper.zip tomtom_scraper.zip owm_scraper.zip
 rm -f /tmp/trust-policy.json /tmp/s3-policy.json
 
 echo ""
@@ -297,8 +297,8 @@ echo "=== Deployment Complete! ==="
 echo ""
 echo "Lambda Functions:"
 echo "  - ${FUNCTION_NAME_PREFIX}-db-scraper"
-echo "  - ${FUNCTION_NAME_PREFIX}-flow-ingest"
-echo "  - ${FUNCTION_NAME_PREFIX}-weather-ingest"
+echo "  - ${FUNCTION_NAME_PREFIX}-tomtom-scraper"
+echo "  - ${FUNCTION_NAME_PREFIX}-owm-scraper"
 echo ""
 echo "Schedules:"
 echo "  - All functions run every 10 minutes"
