@@ -15,7 +15,7 @@ class TomTomFlowScraper:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(script_dir, "..\output_examples")
         os.makedirs(self.output_dir, exist_ok=True)
-        self.output_file = os.path.join(self.output_dir, "tomtom_scraper_output.jsonl")
+        self.output_file = os.path.join(self.output_dir, "tt_scraper_output.jsonl")
         
         # Robust Session
         self.session = requests.Session()
