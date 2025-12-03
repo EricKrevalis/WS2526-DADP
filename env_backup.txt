@@ -1,6 +1,6 @@
 # API Keys
 TOMTOM_API_KEY=C9A2Op6bcWPrr2AGEJv6mFpdz3aOftO1
-WEATHER_API_KEY=your_weather_api_key_here
+WEATHER_API_KEY=76d3c2c705805e009533b5cee35fafef
 
 # AWS Credentials
 AWS_ACCESS_KEY_ID=your_aws_access_key_id
