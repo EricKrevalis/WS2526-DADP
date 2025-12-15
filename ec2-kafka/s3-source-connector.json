@@ -1,0 +1,21 @@
+{
+  "name": "s3-traffic-source",
+  "config": {
+    "connector.class": "io.confluent.connect.s3.source.S3SourceConnector",
+    "tasks.max": "1",
+    
+    "s3.region": "eu-central-1",
+    "s3.bucket.name": "youngleebigdatabucket",
+    
+    "topics.dir": "ingest-data",
+    "topic.regex.list": "raw-traffic:TomTom/.*,raw-weather:OWM/.*,raw-db:DB/.*",
+    
+    "format.class": "io.confluent.connect.s3.format.bytearray.ByteArrayFormat",
+    "value.converter": "org.apache.kafka.connect.converters.ByteArrayConverter",
+    
+    "mode": "GENERIC",
+    "confluent.topic.bootstrap.servers": "broker:29092",
+    "confluent.topic.replication.factor": "1"
+  }
+}
+

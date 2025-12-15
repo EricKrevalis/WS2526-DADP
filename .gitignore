@@ -13,6 +13,7 @@ notes/env_backup.txt
 
 # AWS credentials
 .aws/
+*.pem
 
 # IDE settings
 .idea/
@@ -31,3 +32,24 @@ date_range_data/
 
 # Lambda deployment artifacts
 lambda_functions/*.zip
+
+# Spark checkpoints and logs
+checkpoints/
+spark-warehouse/
+*.log
+derby.log
+metastore_db/
+
+# Kafka/EC2 local secrets (AWS creds should be in env vars on EC2)
+ec2-kafka/.env
+
+# Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter notebooks
+.ipynb_checkpoints/
