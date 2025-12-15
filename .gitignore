@@ -4,3 +4,30 @@ __pycache__/
 venv/
 env/
 .venv/
+
+# Secrets - NEVER commit these
+.env
+*.env
+.env.*
+notes/env_backup.txt
+
+# AWS credentials
+.aws/
+
+# IDE settings
+.idea/
+.vscode/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local data directories
+datalake/
+downloaded_data/
+latest_data/
+date_range_data/
+
+# Lambda deployment artifacts
+lambda_functions/*.zip
