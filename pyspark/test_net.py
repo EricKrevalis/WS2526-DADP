@@ -11,8 +11,7 @@ sock.settimeout(5)
 result = sock.connect_ex((ip, port))
 
 if result == 0:
-    print(f"✅ Success! Connected to {ip}:{port}")
+    print(f"✅ Socket connection is open.")
 else:
-    print(f"❌ Failed! Port {port} is closed/blocked on {ip}. Error code: {result}")
-    print("ACTION: Go to AWS Console -> Security Groups -> Add Inbound Rule for Port 9092 (Source: 0.0.0.0/0 temporarily)")
+    print(f"❌ Connection failed. Error code: {result}")
 sock.close()
