@@ -39,7 +39,7 @@ db_schema = StructType() \
     .add("meta_city", StringType()) \
     .add("meta_scraped_at", StringType()) \
     .add("line", StringType()) \
-    .add("delay", IntegerType()) \
+    .add("delay", IntegerType(), True) \
     .add("direction", StringType()) \
     .add("planned_time", StringType())
 
@@ -90,7 +90,7 @@ def main():
     # --- STREAM 1: TomTom ---
     df_tt = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
-        .option("subscribe", "raw-tomtom") \
+        .option("subscribe", "raw-traffic") \
         .option("startingOffsets", "earliest") \
         .load()
     
@@ -103,7 +103,7 @@ def main():
     # --- STREAM 2: Weather ---
     df_owm = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
-        .option("subscribe", "raw-owm") \
+        .option("subscribe", "raw-weather") \
         .option("startingOffsets", "earliest") \
         .load()
 
