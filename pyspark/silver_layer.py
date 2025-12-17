@@ -2,6 +2,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, to_timestamp, current_timestamp, explode
 from pyspark.sql.types import StructType, StringType, DoubleType, IntegerType, ArrayType
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,11 +50,8 @@ db_schema = StructType() \
 
 def process_nested_stream(df, batch_id, topic_name, schema, output_path):
     """Handles TomTom/Weather (One Row per City -> Explode to Grid Points)"""
-    count = df.count()
-    print(f"\n[STATUS] Batch {batch_id} for {topic_name}: Found {count} records.")
-    
-    if count == 0:
-        return
+    # OPTIMIZATION: Removed df.count() to avoid processing the data twice (once for count, once for write).
+    print(f"\n[{datetime.now()}] [STATUS] Processing Batch {batch_id} for {topic_name}...")
     
     # 1. Parse the Raw JSON
     parsed_df = df.select(
@@ -71,39 +69,36 @@ def process_nested_stream(df, batch_id, topic_name, schema, output_path):
         col("sample.*") # Unpack the struct columns (lat, lon, etc.)
     ).withColumn("ingestion_time", current_timestamp())
 
-    print(f"--- SAMPLE DATA FOR {topic_name} (Exploded) ---")
-    exploded_df.show(5, truncate=False)
-
     exploded_df.write \
         .mode("append") \
         .partitionBy("meta_city") \
         .parquet(output_path)
+    
+    print(f"[{datetime.now()}] [COMPLETED] Batch {batch_id} for {topic_name} written to disk.")
 
 def process_flat_stream(df, batch_id, topic_name, schema, output_path):
     """Handles DB (Already Flat)"""
-    count = df.count()
-    print(f"\n[STATUS] Batch {batch_id} for {topic_name}: Found {count} records.")
-    
-    if count == 0:
-        return
+    # OPTIMIZATION: Removed df.count() to avoid processing the data twice.
+    print(f"\n[{datetime.now()}] [STATUS] Processing Batch {batch_id} for {topic_name}...")
     
     clean_df = df.select(
         from_json(col("value").cast("string"), schema).alias("data")
     ).select("data.*") \
      .withColumn("ingestion_time", current_timestamp())
 
-    print(f"--- SAMPLE DATA FOR {topic_name} ---")
-    clean_df.show(5, truncate=False)
-
     clean_df.write \
         .mode("append") \
         .partitionBy("meta_city") \
         .parquet(output_path)
+    
+    print(f"[{datetime.now()}] [COMPLETED] Batch {batch_id} for {topic_name} written to disk.")
 
 def main():
     spark = SparkSession.builder \
         .appName("HybridLakehouse_Silver") \
         .config("spark.sql.streaming.schemaInference", "true") \
+        .config("spark.sql.shuffle.partitions", "5") \
+        .config("spark.driver.memory", "2g") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("WARN")
@@ -113,14 +108,15 @@ def main():
         raise ValueError("KAFKA_BROKER_IP not set")
     
     KAFKA_BROKER = f"{kafka_ip}:9092"
-    print(f"--- CONNECTING TO: {KAFKA_BROKER} ---")
+    print(f"[{datetime.now()}] --- CONNECTING TO: {KAFKA_BROKER} ---")
 
     # --- 1. TOMTOM (Nested) ---
-    print(">>> Starting TomTom Stream...")
+    print(f"[{datetime.now()}] >>> Starting TomTom Stream...")
     df_tt = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-traffic") \
         .option("startingOffsets", "earliest") \
+        .option("maxOffsetsPerTrigger", 10000) \
         .load()
     
     q_tt = df_tt.writeStream \
@@ -130,14 +126,15 @@ def main():
         .start()
     
     q_tt.awaitTermination()
-    print("<<< Finished TomTom.")
+    print(f"[{datetime.now()}] <<< Finished TomTom.")
 
     # --- 2. WEATHER (Nested) ---
-    print(">>> Starting Weather Stream...")
+    print(f"[{datetime.now()}] >>> Starting Weather Stream...")
     df_owm = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-weather") \
         .option("startingOffsets", "earliest") \
+        .option("maxOffsetsPerTrigger", 10000) \
         .load()
 
     q_owm = df_owm.writeStream \
@@ -147,14 +144,15 @@ def main():
         .start()
         
     q_owm.awaitTermination()
-    print("<<< Finished Weather.")
+    print(f"[{datetime.now()}] <<< Finished Weather.")
 
     # --- 3. DB (Flat) ---
-    print(">>> Starting DB Stream...")
+    print(f"[{datetime.now()}] >>> Starting DB Stream...")
     df_db = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-db") \
         .option("startingOffsets", "earliest") \
+        .option("maxOffsetsPerTrigger", 10000) \
         .load()
 
     q_db = df_db.writeStream \
@@ -164,7 +162,7 @@ def main():
         .start()
         
     q_db.awaitTermination()
-    print("<<< Finished DB.")
+    print(f"[{datetime.now()}] <<< Finished DB.")
 
 if __name__ == "__main__":
     main()
