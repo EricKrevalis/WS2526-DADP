@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- SCHEMAS (NESTED - Matching Local Scraper Output) ---
+# --- SCHEMAS (MATCHING YOUR LAMBDAS) ---
 
 # TomTom: Root object -> 'samples' array -> grid objects
 tomtom_schema = StructType() \
@@ -39,7 +39,8 @@ weather_schema = StructType() \
         .add("description", StringType())
     ))
 
-# DB is Flat (no samples array)
+# DB: Flat Structure (No samples array)
+# Note: 'raw_id' and 'platform' removed per previous request
 db_schema = StructType() \
     .add("meta_city", StringType()) \
     .add("meta_scraped_at", StringType()) \
@@ -50,7 +51,7 @@ db_schema = StructType() \
 
 def process_nested_stream(df, batch_id, topic_name, schema, output_path):
     """Handles TomTom/Weather (One Row per City -> Explode to Grid Points)"""
-    # OPTIMIZATION: Removed df.count() to avoid processing the data twice (once for count, once for write).
+    # OPTIMIZATION: Removed df.count() to avoid processing the data twice.
     print(f"\n[{datetime.now()}] [STATUS] Processing Batch {batch_id} for {topic_name}...")
     
     # 1. Parse the Raw JSON
@@ -111,7 +112,7 @@ def main():
     print(f"[{datetime.now()}] --- CONNECTING TO: {KAFKA_BROKER} ---")
 
     # --- 1. TOMTOM (Nested) ---
-    print(f"[{datetime.now()}] >>> Starting TomTom Stream...")
+    print(f"[{datetime.now()}] >>> Starting TomTom Stream (Topic: raw-traffic)...")
     df_tt = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-traffic") \
@@ -129,7 +130,7 @@ def main():
     print(f"[{datetime.now()}] <<< Finished TomTom.")
 
     # --- 2. WEATHER (Nested) ---
-    print(f"[{datetime.now()}] >>> Starting Weather Stream...")
+    print(f"[{datetime.now()}] >>> Starting Weather Stream (Topic: raw-weather)...")
     df_owm = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-weather") \
@@ -147,7 +148,7 @@ def main():
     print(f"[{datetime.now()}] <<< Finished Weather.")
 
     # --- 3. DB (Flat) ---
-    print(f"[{datetime.now()}] >>> Starting DB Stream...")
+    print(f"[{datetime.now()}] >>> Starting DB Stream (Topic: raw-db)...")
     df_db = spark.readStream.format("kafka") \
         .option("kafka.bootstrap.servers", KAFKA_BROKER) \
         .option("subscribe", "raw-db") \
