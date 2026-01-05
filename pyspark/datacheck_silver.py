@@ -1,16 +1,15 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, to_timestamp, floor, unix_timestamp, from_unixtime, min, max, count, count_distinct
+from pyspark.sql.functions import col, minute, count, to_timestamp, floor, unix_timestamp, from_unixtime, to_date, collect_set, sort_array
 
 def main():
     spark = SparkSession.builder \
-        .appName("DeepDiagnostic") \
-        .config("spark.sql.shuffle.partitions", "5") \
+        .appName("TimingInspector") \
         .master("local[*]") \
         .getOrCreate()
     
     spark.sparkContext.setLogLevel("WARN")
 
-    print("\n🔎 RUNNING CROSS-SOURCE DIAGNOSTICS (RAW VS PARSED)...")
+    print("\n🔎 RUNNING TIMING & HEARTBEAT DIAGNOSTICS...")
 
     # Paths to check
     sources = {
@@ -19,135 +18,109 @@ def main():
         "Rail (DB)":        "./datalake/silver/db"
     }
 
-    results = []
-    
-    # Global Time Range trackers
-    global_min = None
-    global_max = None
+    # 1. ANALYZE SCRAPE TIMING (The "Heartbeat")
+    print("\n[1] SCRAPER HEARTBEAT ANALYSIS (Overall)")
+    print(f"{'SOURCE':<20} | {'MINUTE':<10} | {'COUNT':<10} | {'% OF TOTAL'}")
+    print("-" * 60)
 
     for name, path in sources.items():
-        print(f"\n[Analysing] {name}...")
         try:
             df = spark.read.parquet(path)
+            total = df.count()
             
-            # 1. Determine Time Column
-            time_col = "meta_scraped_at" # Silver layer standard
+            # Extract minute from string timestamp
+            df_time = df.withColumn("ts", to_timestamp(col("meta_scraped_at"))) \
+                        .withColumn("raw_minute", minute(col("ts")))
             
-            # 2. Normalize Timestamp & Calculate 10-min Buckets
-            # This replicates the Gold Layer logic exactly
-            df_calc = df.withColumn("ts", to_timestamp(col(time_col))) \
-                        .withColumn("bucket", from_unixtime(floor(unix_timestamp(col("ts")) / 600) * 600).cast("timestamp"))
+            # Group by minute to see the schedule
+            minute_dist = df_time.groupBy("raw_minute").count().orderBy("raw_minute").collect()
             
-            # 3. Calculate Stats (RAW vs PARSED)
-            print(f"   ... Computing statistics ...")
+            for row in minute_dist:
+                m = row['raw_minute']
+                c = row['count']
+                pct = (c / total) * 100
+                if pct > 1.0:
+                    print(f"{name:<20} | {m:<10} | {c:<10} | {pct:.1f}%")
             
-            # We calculate Raw Max String AND Parsed Max Timestamp to catch logic errors
-            stats = df_calc.agg(
-                count("*").alias("total_rows"),
-                max(time_col).alias("raw_max_str"),
-                min(time_col).alias("raw_min_str"),
-                count_distinct("bucket").alias("buckets"),
-                min("bucket").alias("start"),
-                max("bucket").alias("end"),
-                count(col("bucket")).alias("valid_rows")
-            ).collect()[0]
-            
-            # Collect unique buckets for overlap analysis (Small data volume allows collect)
-            unique_buckets = [r['bucket'] for r in df_calc.select("bucket").distinct().collect() if r['bucket'] is not None]
-            bucket_set = set(unique_buckets)
-
-            bucket_count = stats["buckets"]
-            start = stats["start"]
-            end = stats["end"]
-            
-            # Logic Check vars
-            raw_max_str = stats["raw_max_str"]
-            raw_min_str = stats["raw_min_str"]
-            parse_failures = stats["total_rows"] - stats["valid_rows"]
-            
-            print(f"   ... Found {bucket_count} buckets.")
-            if parse_failures > 0:
-                print(f"   ⚠️  WARNING: {parse_failures} rows failed to parse timestamp!")
-                print(f"       Raw range: {raw_min_str} -> {raw_max_str}")
-            
-            # Update globals for comparison
-            if start and (global_min is None or start < global_min): global_min = start
-            if end and (global_max is None or end > global_max): global_max = end
-
-            results.append({
-                "source": name,
-                "buckets": bucket_count,
-                "start": start,
-                "end": end,
-                "raw_end": raw_max_str,
-                "parse_errors": parse_failures,
-                "bucket_set": bucket_set
-            })
+            print("-" * 60)
 
         except Exception as e:
             print(f"⚠️  Could not read {name}: {e}")
-            results.append({
-                "source": name, 
-                "buckets": 0, 
-                "start": "N/A", 
-                "end": "N/A", 
-                "raw_end": "N/A", 
-                "parse_errors": 0,
-                "bucket_set": set()
-            })
 
-    # --- REPORTING ---
-    print("\n" + "="*100)
-    print(f"{'SOURCE NAME':<20} | {'BUCKETS':<8} | {'MAX BUCKET (Logic)':<20} | {'MAX RAW STRING (Data)':<25} | {'PARSE ERRORS'}")
+    # 2. ROBUSTNESS VERIFICATION (Flooring Strategy)
+    print("\n[2] ROBUSTNESS CHECK (Flooring to 30-min Buckets)")
+    print("   -> Testing if :15 and :45 map safely to the center of buckets.")
+    print("-" * 80)
+    print(f"{'SOURCE':<18} | {'RAW MIN':<7} | {'SAFE BUCKET':<20} | {'COUNT'}")
+    print("-" * 80)
+    
+    for name, path in sources.items():
+        try:
+            df = spark.read.parquet(path)
+            
+            # 1800s = 30 mins
+            # Logic: floor(ts / 1800) * 1800
+            # This puts :00-:29 into bucket :00
+            # This puts :30-:59 into bucket :30
+            df_calc = df.withColumn("ts", to_timestamp(col("meta_scraped_at"))) \
+                        .withColumn("safe_bucket", from_unixtime(floor(unix_timestamp(col("ts")) / 1800) * 1800).cast("timestamp")) \
+                        .withColumn("raw_minute", minute(col("ts"))) \
+                        .withColumn("bucket_min", minute(col("safe_bucket")))
+            
+            rows = df_calc.groupBy("raw_minute", "bucket_min") \
+                          .count() \
+                          .orderBy("raw_minute") \
+                          .collect()
+            
+            for r in rows:
+                if r['count'] > 100: # Filter noise
+                    print(f"{name:<18} | {r['raw_minute']:<7} | :{str(r['bucket_min']):<19} | {r['count']}")
+
+        except Exception as e:
+            pass
+
+    # 3. TEMPORAL SHIFT ANALYSIS
+    print("\n[3] TEMPORAL SHIFT ANALYSIS (Consistency Check)")
+    print("   -> Verifying the new logic works for BOTH old (10-min) and new (30-min) schedules")
     print("-" * 100)
+    
+    for name, path in sources.items():
+        try:
+            df = spark.read.parquet(path)
+            
+            # Extract date and minute
+            df_analysis = df.withColumn("ts", to_timestamp(col("meta_scraped_at"))) \
+                            .withColumn("date", to_date(col("ts"))) \
+                            .withColumn("raw_minute", minute(col("ts"))) \
+                            .withColumn("bucket_min", minute(from_unixtime(floor(unix_timestamp(col("ts")) / 1800) * 1800).cast("timestamp")))
 
-    for r in results:
-        print(f"{r['source']:<20} | {r['buckets']:<8} | {str(r['end']):<20} | {str(r['raw_end']):<25} | {r['parse_errors']}")
+            print(f"\n   SOURCE: {name}")
+            print(f"   {'DATE':<12} | {'SCRAPE MINUTES SEEN':<60}")
+            
+            # Collect distinct minutes per day
+            daily_patterns = df_analysis.groupBy("date") \
+                                        .agg(sort_array(collect_set("raw_minute")).alias("minutes")) \
+                                        .orderBy("date") \
+                                        .collect()
+            
+            for r in daily_patterns:
+                mins = r['minutes']
+                mins_str = ", ".join([str(m) for m in mins])
+                if len(mins_str) > 60: mins_str = mins_str[:57] + "..."
+                print(f"   {str(r['date']):<12} | {mins_str}")
 
-    print("="*100)
+            # ROBUSTNESS CHECK:
+            # Does the logic produce any weird buckets?
+            bad_mappings = df_analysis.filter(~col("bucket_min").isin([0, 30]))
+            bad_count = bad_mappings.count()
+            
+            if bad_count == 0:
+                print("   ✅ STABLE: All data maps to :00 or :30 buckets.")
+            else:
+                print(f"   ❌ WARNING: {bad_count} records failed to map.")
 
-    # --- CROSS-SOURCE OVERLAP ANALYSIS ---
-    print("\n" + "="*100)
-    print("⚔️  CROSS-SOURCE OVERLAP ANALYSIS")
-    print("(Checking if timestamps align between sources)")
-    print("="*100)
-
-    if len(results) > 1:
-        for i in range(len(results)):
-            for j in range(i + 1, len(results)):
-                src1 = results[i]
-                src2 = results[j]
-                
-                set1 = src1['bucket_set']
-                set2 = src2['bucket_set']
-                
-                common = len(set1.intersection(set2))
-                only_in_1 = len(set1 - set2)
-                only_in_2 = len(set2 - set1)
-                
-                print(f"\nComparing {src1['source']} vs {src2['source']}:")
-                print(f"   🔗 Matching Buckets: {common}")
-                print(f"   ⬅️  Only in {src1['source']}: {only_in_1}")
-                print(f"   ➡️  Only in {src2['source']}: {only_in_2}")
-                
-                if common == 0 and (len(set1) > 0 and len(set2) > 0):
-                    print("   ⚠️  CRITICAL: No temporal overlap! Timezones or Formats might be completely mismatched.")
-
-    # --- THEORETICAL MAX CHECK ---
-    if global_min and global_max:
-        total_seconds = (global_max - global_min).total_seconds()
-        theoretical_buckets = int(total_seconds / 600) + 1
-        
-        print(f"\n\n⏱  Global Timeline: {global_min} to {global_max}")
-        print(f"⏱  Theoretical Max Buckets (10-min slots): {theoretical_buckets}")
-        
-        print("\n--- GAPS DETECTED (Relative to Global Timeline) ---")
-        for r in results:
-            if r['buckets'] > 0:
-                missing = theoretical_buckets - r['buckets']
-                pct = (missing / theoretical_buckets) * 100
-                status = "✅" if pct < 5 else "❌"
-                print(f"{status} {r['source']}: Missing {missing} buckets ({pct:.1f}%)")
+        except Exception as e:
+            pass
 
 if __name__ == "__main__":
     main()

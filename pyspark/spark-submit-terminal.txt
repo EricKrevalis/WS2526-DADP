@@ -1,5 +1,7 @@
 # If using venv
 # source .venv/bin/activate 
+# Linux: start postgresql service if not started yet
+# sudo systemctl start postgresql
 
 spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 pyspark/silver_layer.py
 
