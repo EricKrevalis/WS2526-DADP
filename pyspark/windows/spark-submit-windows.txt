@@ -1,0 +1,43 @@
+# Windows Pipeline Commands
+# Use these commands on Windows to run the pipeline
+
+# Prerequisites: Set environment variables first
+$env:SPARK_HOME = ".venv\lib\site-packages\pyspark"
+$env:PYSPARK_PYTHON = ".venv\Scripts\python.exe"
+$env:PYSPARK_DRIVER_PYTHON = ".venv\Scripts\python.exe"
+$env:HADOOP_HOME = "C:\tmp"
+New-Item -ItemType Directory -Force -Path "C:\tmp\bin" | Out-Null
+
+# Option 1: Run all steps automatically
+.\pyspark\windows\run-pipeline.ps1
+
+# Option 2: Run individual steps
+
+# Step 1: Silver Layer
+.venv\lib\site-packages\pyspark\bin\spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 pyspark/windows/silver_layer.py
+
+# Step 2: Gold Layer
+.venv\lib\site-packages\pyspark\bin\spark-submit pyspark/windows/gold_layer.py
+
+# Step 3: Publish to Postgres
+.venv\lib\site-packages\pyspark\bin\spark-submit --packages org.postgresql:postgresql:42.6.0 pyspark/windows/publish_to_postgres.py
+
+
+# POSTGRESQL DATA VERIFICATION
+
+# Using DBeaver:
+1. Connect to traffic_lake database as traffic_user
+2. Navigate to: traffic_lake -> Schemas -> public -> Tables
+3. Right-click pendler_pilot -> View Data
+
+# Using psql:
+cd "C:\Program Files\PostgreSQL\18\bin"
+.\psql.exe -h localhost -d traffic_lake -U traffic_user
+
+# Then run:
+SELECT COUNT(*) FROM pendler_pilot;
+SELECT * FROM pendler_pilot LIMIT 5;
+SELECT meta_city, time_bucket, rail_stress_index, bus_avg_delay
+FROM pendler_pilot WHERE meta_city = 'Hamburg' LIMIT 5;
+\q
+

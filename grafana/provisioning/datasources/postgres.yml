@@ -1,0 +1,22 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: host.docker.internal:5432
+    database: traffic_lake
+    user: traffic_user
+    # Password will need to be set manually in Grafana UI
+    # Go to Configuration → Data Sources → PostgreSQL → Edit
+    # Enter your password and click "Save & Test"
+    secureJsonData:
+      password: "CHANGE_ME"
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 100
+      maxIdleConns: 100
+      connMaxLifetime: 14400
+      postgresVersion: 15
+      timescaledb: false
+

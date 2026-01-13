@@ -2,4 +2,4 @@ requests
 boto3
 kafka-python
 python-dotenv
-
+pyspark==3.5.3

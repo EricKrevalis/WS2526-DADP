@@ -25,12 +25,12 @@ View first 5 rows
 Count total rows
     SELECT count(*) FROM ml_features_wide;
 
-Check specific columns for Hamburg
+Check specific columns for Hamburg 
     SELECT meta_city, time_bucket, grid_0_0_speed, rail_stress_index
     FROM ml_features_wide WHERE meta_city = 'Hamburg' LIMIT 5;
 
 4. Exit
-\q
+
 
 
 Open DBeaver
