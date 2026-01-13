@@ -25,9 +25,9 @@ Write-Host "Project Root: $projectRoot" -ForegroundColor Gray
 Write-Host "Spark Home: $env:SPARK_HOME" -ForegroundColor Gray
 Write-Host ""
 
-# Step 1: Silver Layer
-Write-Host "Step 1: Running Silver Layer..." -ForegroundColor Yellow
-& $sparkSubmit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 pyspark/windows/silver_layer.py
+# Step 1: Silver Layer (Batch mode - Windows compatible)
+Write-Host "Step 1: Running Silver Layer (Batch Mode)..." -ForegroundColor Yellow
+& $sparkSubmit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 pyspark/windows/silver_layer_batch.py
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Silver Layer failed. Stopping pipeline." -ForegroundColor Red
