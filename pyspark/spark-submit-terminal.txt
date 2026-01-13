@@ -15,7 +15,7 @@ spark-submit --packages org.postgresql:postgresql:42.6.0 pyspark/publish_to_post
 1. Login (+Password)
 psql -h localhost -d traffic_lake -U traffic_user
 
-2. Check if table 'ml_features_wide' exists
+2. Check if table 'pendler_pilot' exists
 \dt
 
 3. Validation Queries
