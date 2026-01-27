@@ -26,6 +26,7 @@ Thumbs.db
 
 # Deprecated / archived (kept locally, not in repo)
 old/
+training/
 
 # Local data directories
 datalake/
