@@ -131,10 +131,10 @@ def main():
 ╔══════════════════════════════════════════════════════════════╗
 ║              S3 to Kafka Bridge - Starting                   ║
 ╠══════════════════════════════════════════════════════════════╣
-║  Bucket: {S3_BUCKET:<50} ║
-║  Region: {S3_REGION:<50} ║
-║  Kafka:  {KAFKA_BROKER:<50} ║
-║  Poll:   Every {POLL_INTERVAL} seconds{' ' * 39}║
+║  Bucket: {S3_BUCKET:<50}                                     ║
+║  Region: {S3_REGION:<50}                                     ║
+║  Kafka:  {KAFKA_BROKER:<50}                                  ║
+║  Poll:   Every {POLL_INTERVAL} seconds{' ' * 39}             ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     

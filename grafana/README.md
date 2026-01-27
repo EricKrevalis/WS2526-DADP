@@ -30,13 +30,12 @@ POSTGRES_PASSWORD=your_postgres_password_here
 cd grafana
 docker-compose up -d
 ```
-
 ### 3. Access Grafana
 
 - Open browser: http://localhost:3000
 - Login:
   - Username: `admin`
-  - Password: `admin` (change on first login)
+  - Password: `pepi`
 
 ### 4. Verify Data Source
 

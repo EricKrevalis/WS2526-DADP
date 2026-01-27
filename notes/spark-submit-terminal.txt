@@ -1,0 +1,53 @@
+# If using venv
+# source .venv/bin/activate 
+# Linux: start postgresql service if not started yet
+# sudo systemctl start postgresql
+
+spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 pyspark/silver_layer.py
+
+spark-submit pyspark/gold_layer.py
+
+spark-submit --packages org.postgresql:postgresql:42.6.0 pyspark/publish_to_postgres.py
+
+
+# POSTGRESQL DATA VERIFICATION
+
+1. Login (+Password)
+psql -h localhost -d traffic_lake -U traffic_user
+
+2. Check if table 'pendler_pilot' exists
+\dt
+
+3. Validation Queries
+View first 5 rows
+    SELECT * FROM ml_features_wide LIMIT 5;
+
+Count total rows
+    SELECT count(*) FROM ml_features_wide;
+
+Check specific columns for Hamburg 
+    SELECT meta_city, time_bucket, grid_0_0_speed, rail_stress_index
+    FROM ml_features_wide WHERE meta_city = 'Hamburg' LIMIT 5;
+
+4. Exit
+
+
+
+Open DBeaver
+Click the "New Database Connection" icon (plug with a plus sign)
+Select "PostgreSQL" -> Next
+Fill in the Main tab:
+- Host: localhost
+- Port: 5432
+- Database: traffic_lake
+- Username: traffic_user
+- Password: 
+Click "Test Connection" (It might ask to download drivers - click Yes)
+Click "Finish"
+
+Viewing Data
+In the "Database Navigator" (left sidebar), expand:
+
+traffic_lake -> Schemas -> public -> Tables
+
+Double-click "ml_features_wide"

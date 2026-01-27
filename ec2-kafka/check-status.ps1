@@ -1,5 +1,5 @@
 # =============================================================================
-# check-status.ps1 - Check Kafka Connect and Connector Status
+# check-status.ps1 - Check Kafka Broker (and optionally Kafka Connect)
 # =============================================================================
 # Usage: .\check-status.ps1 -EC2_IP "54.123.45.67"
 # =============================================================================
@@ -9,53 +9,58 @@ param(
     [string]$EC2_IP
 )
 
+$KAFKA_BROKER = "${EC2_IP}:9092"
 $CONNECT_URL = "http://${EC2_IP}:8083"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 Write-Host "=========================================="
-Write-Host "  Kafka Connect Status Check"
+Write-Host "  EC2 Kafka Status Check"
 Write-Host "=========================================="
 Write-Host ""
 
-# Check Connect health
-Write-Host "Kafka Connect:" -ForegroundColor Cyan
+# 1. Check Kafka broker (port 9092) - used by PySpark, s3_to_kafka
+Write-Host "Kafka broker ($KAFKA_BROKER):" -ForegroundColor Cyan
+$kafkaCheck = @"
+from kafka import KafkaConsumer
+import sys
+try:
+    c = KafkaConsumer(bootstrap_servers='$KAFKA_BROKER', consumer_timeout_ms=5000)
+    topics = [t for t in c.topics() if not t.startswith('_')]
+    c.close()
+    print('OK|' + ','.join(sorted(topics)))
+except Exception as e:
+    print('FAIL|' + str(e))
+    sys.exit(1)
+"@
 try {
-    $response = Invoke-RestMethod -Uri "$CONNECT_URL/" -Method Get -TimeoutSec 5
-    Write-Host "  ✓ Running (version: $($response.version))" -ForegroundColor Green
-} catch {
-    Write-Host "  ✗ Not reachable at $CONNECT_URL" -ForegroundColor Red
-    exit 1
-}
-
-# List connectors
-Write-Host ""
-Write-Host "Registered Connectors:" -ForegroundColor Cyan
-try {
-    $connectors = Invoke-RestMethod -Uri "$CONNECT_URL/connectors" -Method Get
-    if ($connectors.Count -eq 0) {
-        Write-Host "  (none)" -ForegroundColor Yellow
-    } else {
-        foreach ($connector in $connectors) {
-            $status = Invoke-RestMethod -Uri "$CONNECT_URL/connectors/$connector/status" -Method Get
-            $state = $status.connector.state
-            $color = switch ($state) {
-                "RUNNING" { "Green" }
-                "PAUSED" { "Yellow" }
-                default { "Red" }
-            }
-            Write-Host "  - $connector : $state" -ForegroundColor $color
-            
-            # Show task status
-            foreach ($task in $status.tasks) {
-                $taskColor = if ($task.state -eq "RUNNING") { "Green" } else { "Red" }
-                Write-Host "      Task $($task.id): $($task.state)" -ForegroundColor $taskColor
-                if ($task.trace) {
-                    Write-Host "      Error: $($task.trace.Substring(0, [Math]::Min(100, $task.trace.Length)))..." -ForegroundColor Red
-                }
-            }
+    $result = & $pythonExe -c $kafkaCheck 2>&1
+    if ($LASTEXITCODE -eq 0 -and $result -match '^OK\|') {
+        $topics = ($result -replace '^OK\|', '').Split(',')
+        Write-Host "  OK Reachable" -ForegroundColor Green
+        if ($topics.Count -gt 0 -and $topics[0] -ne '') {
+            Write-Host "  Topics: $($topics -join ', ')" -ForegroundColor Gray
+        } else {
+            Write-Host "  Topics: (none yet)" -ForegroundColor Gray
         }
+    } else {
+        $err = if ($result -match '^FAIL\|') { $result -replace '^FAIL\|', '' } else { $result }
+        Write-Host "  X Not reachable" -ForegroundColor Red
+        Write-Host "  $err" -ForegroundColor Red
     }
 } catch {
-    Write-Host "  Error getting connectors: $_" -ForegroundColor Red
+    Write-Host "  X Not reachable" -ForegroundColor Red
+    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+}
+
+# 2. Kafka Connect (port 8083) - optional; we use s3_to_kafka instead
+Write-Host ""
+Write-Host "Kafka Connect (optional, port 8083):" -ForegroundColor Cyan
+try {
+    $response = Invoke-RestMethod -Uri "$CONNECT_URL/" -Method Get -TimeoutSec 3
+    Write-Host "  OK Running (version: $($response.version))" -ForegroundColor Green
+} catch {
+    Write-Host "  Not used / not reachable (we use s3_to_kafka)" -ForegroundColor Gray
 }
 
 Write-Host ""
@@ -69,7 +74,6 @@ Write-Host ""
 Write-Host "View messages in raw-traffic topic:"
 Write-Host "  docker exec broker kafka-console-consumer --bootstrap-server localhost:29092 --topic raw-traffic --from-beginning --max-messages 5" -ForegroundColor Gray
 Write-Host ""
-Write-Host "Check container logs:"
-Write-Host "  docker logs connect -f" -ForegroundColor Gray
+Write-Host "Check broker logs:"
+Write-Host '  docker logs broker -f' -ForegroundColor Gray
 Write-Host ""
-
