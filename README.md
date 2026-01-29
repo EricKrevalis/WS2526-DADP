@@ -2,7 +2,7 @@
 
 ## Our GitHub repository for the DADP project
 
-### Files Directory
+### File Directory
 * Files to run kafka in AWS EC2: [ec2-kafka](./ec2-kafka)
 * Files used to connect and use Grafana: [grafana](./grafana)
 * Files to test our initial API functions: [ingest](./ingest)
